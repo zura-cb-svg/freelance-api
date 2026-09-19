@@ -11,7 +11,8 @@ app = FastAPI(title="Freelance Marketplace API")
 
 origins = [
     "http://localhost:5173",
-    "https://freelance-dfs45cnlj-chakvetzura-6681.vercel.app"
+    "https://freelance-dfs45cnlj-chakvetzura-6681.vercel.app",
+    "https://freelance-api-phi.vercel.app"
 ]
 
 app.add_middleware(
