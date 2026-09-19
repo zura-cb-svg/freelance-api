@@ -79,3 +79,27 @@ def get_chat_history(user1_id: int, user2_id: int, db: Session = Depends(get_db)
         "other_name": name,
         "messages": [{"sender_id": m.sender_id, "content": m.content} for m in messages]
     }
+
+
+@router.get("/inbox/{user_id}")
+def get_inbox(user_id: int, db: Session = Depends(get_db)):
+    # მოგვაქვს ყველა მესიჯი, სადაც შენ ან გამგზავნი ხარ, ან მიმღები (ბოლოდან პირველისკენ)
+    messages = db.query(models.Message).filter(
+        (models.Message.sender_id == user_id) | (models.Message.receiver_id == user_id)
+    ).order_by(models.Message.id.desc()).all()
+    
+    conversations = {}
+    for msg in messages:
+        # ვიგებთ მეორე იუზერის ID-ს
+        other_id = msg.receiver_id if msg.sender_id == user_id else msg.sender_id
+        
+        # თუ ეს იუზერი ჯერ არ დაგვიმატებია სიაში, ვამატებთ (რადგან უახლესი მესიჯები პირველი მოდის)
+        if other_id not in conversations:
+            other_user = db.query(models.User).filter(models.User.id == other_id).first()
+            conversations[other_id] = {
+                "user_id": other_id,
+                "name": other_user.full_name if other_user else f"User #{other_id}",
+                "last_message": msg.content
+            }
+            
+    return list(conversations.values())
