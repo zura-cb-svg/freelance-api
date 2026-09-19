@@ -64,3 +64,20 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
                 )
     except WebSocketDisconnect:
         manager.disconnect(user_id)
+
+@router.get("/history/{user1_id}/{user2_id}")
+def get_chat_history(user1_id: int, user2_id: int, db: Session = Depends(get_db)):
+    # ვეძებთ მეორე იუზერის ნამდვილ სახელს
+    other_user = db.query(models.User).filter(models.User.id == user2_id).first()
+    name = other_user.full_name if other_user else f"User #{user2_id}"
+
+    # მოგვაქვს ამ ორი იუზერის მიმოწერა
+    messages = db.query(models.Message).filter(
+        ((models.Message.sender_id == user1_id) & (models.Message.receiver_id == user2_id)) |
+        ((models.Message.sender_id == user2_id) & (models.Message.receiver_id == user1_id))
+    ).order_by(models.Message.id.asc()).all()
+
+    return {
+        "other_name": name,
+        "messages": [{"sender_id": m.sender_id, "content": m.content} for m in messages]
+    }
