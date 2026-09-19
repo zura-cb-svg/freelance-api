@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useLocation, useNavigate, Link } from "react-router-dom";
-import { Wallet, User, Pencil, Trash2, ArrowLeft, AlertTriangle } from "lucide-react";
+import { Wallet, User, Pencil, Trash2, ArrowLeft, AlertTriangle, MessageSquare } from "lucide-react";
 import { findJobById, deleteJob } from "../api/jobs";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
@@ -127,6 +127,16 @@ export function JobDetails() {
                 <Trash2 size={15} /> Delete job
               </Button>
             </>
+          )}
+
+          {isAuthenticated && !isOwner && (
+            <Button
+              variant="secondary"
+              onClick={() => navigate("/messages", { state: { receiverId: job.owner_id } })}
+              className="flex-1 py-2.5 flex items-center justify-center gap-2"
+            >
+              <MessageSquare size={15} /> Message Client
+            </Button>
           )}
 
           {canApply && !applied && (
