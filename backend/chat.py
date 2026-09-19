@@ -39,14 +39,13 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
     await manager.connect(websocket, user_id)
     try:
         while True:
-            # ველოდებით მესიჯს ფრონტენდიდან
             data = await websocket.receive_text()
             message_data = json.loads(data)
             
             content = message_data.get("content")
-            receiver_id = message_data.get("receiver_id")
+            # ვაიძულებთ, რომ აუცილებლად ციფრად აღიქვას
+            receiver_id = int(message_data.get("receiver_id"))
 
-            # ვინახავთ მესიჯს PostgreSQL ბაზაში
             new_message = models.Message(
                 content=content,
                 sender_id=user_id,
@@ -54,15 +53,14 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
             )
             db.add(new_message)
             db.commit()
-            db.refresh(new_message)
 
-            # ვუგზავნით მიმღებს (თუ საიტზე შემოსულია)
-            if receiver_id:
-                await manager.send_personal_message(
-                    {"sender_id": user_id, "content": content}, 
-                    receiver_id
-                )
-    except WebSocketDisconnect:
+            # ვაგზავნით მიმღებთან, თუ ონლაინაა
+            await manager.send_personal_message(
+                {"sender_id": user_id, "content": content}, 
+                receiver_id
+            )
+    except Exception as e:
+        print(f"WebSocket Error: {e}") # ეს ლოგებში დაგვანახებს პრობლემას
         manager.disconnect(user_id)
 
 @router.get("/history/{user1_id}/{user2_id}")

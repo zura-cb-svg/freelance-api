@@ -110,7 +110,7 @@ export function JobDetails() {
         </div>
 
         <div className="mt-3 flex items-center gap-1.5 text-sm text-ink-500">
-          <User size={14} /> Posted by client #{job.owner_id}
+          <User size={14} /> Posted by {job.owner?.full_name || `Client #${job.owner_id}`}
         </div>
 
         <div className="mt-6 whitespace-pre-wrap text-[15px] leading-relaxed text-ink-700">

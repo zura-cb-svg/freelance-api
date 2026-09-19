@@ -43,7 +43,8 @@ class JobResponse(BaseModel):
     description: str
     budget: int       
     owner_id: int
-    
+    owner: Optional[UserResponse] = None 
+
     model_config = {"from_attributes": True}
 
 class ApplicationCreate(BaseModel):
@@ -84,3 +85,4 @@ class ReviewResponse(BaseModel):
     target_user_id: int
 
     model_config = {"from_attributes": True}
+
