@@ -69,3 +69,4 @@ class Message(Base):
     id = Column(Integer, primary_key=True)
     content = Column(String)
     sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    receiver_id = Column(Integer, ForeignKey("users.id"), nullable=False) 

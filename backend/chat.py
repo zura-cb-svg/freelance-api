@@ -1,85 +1,66 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
-from typing import List
 from sqlalchemy.orm import Session
+from typing import Dict
+import json
 from database import get_db
-from models import Message
-from fastapi.responses import HTMLResponse
+import models
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
+# 1. Connection Manager (ინახავს ონლაინ იუზერებს რეალურ დროში)
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: List[WebSocket] = []
+        # ლექსიკონი, სადაც ვინახავთ: {user_id: websocket_connection}
+        self.active_connections: Dict[int, WebSocket] = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, user_id: int):
         await websocket.accept()
-        self.active_connections.append(websocket)
+        self.active_connections[user_id] = websocket
 
-    def disconnect(self, websocket: WebSocket):
-        
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+    def disconnect(self, user_id: int):
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
 
-    async def broadcast(self, message: str):
-        for connection in list(self.active_connections):
-            await connection.send_text(message)
+    async def send_personal_message(self, message: dict, user_id: int):
+        # თუ მომხმარებელი ონლაინაა, ვუგზავნით მესიჯს ეგრევე
+        if user_id in self.active_connections:
+            await self.active_connections[user_id].send_json(message)
 
 manager = ConnectionManager()
 
-@router.websocket("/ws/{client_id}")
-async def websocket_endpoint(
-    websocket: WebSocket,
-    client_id: int,
-    db: Session = Depends(get_db)
-):
-    await manager.connect(websocket)
+# 2. ეს არის ის "სატესტო" ენდპოინტი, რასაც შენი ფრონტენდი ელოდება
+@router.get("/test")
+def test_chat():
+    return {"message": "Chat is active and WebSocket is ready!"}
+
+# 3. მთავარი ჩატის (WebSocket) ენდპოინტი
+@router.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = Depends(get_db)):
+    await manager.connect(websocket, user_id)
     try:
         while True:
+            # ველოდებით მესიჯს ფრონტენდიდან
             data = await websocket.receive_text()
-            new_msg = Message(content=data, sender_id=client_id)
-            db.add(new_msg)
+            message_data = json.loads(data)
+            
+            content = message_data.get("content")
+            receiver_id = message_data.get("receiver_id")
+
+            # ვინახავთ მესიჯს PostgreSQL ბაზაში
+            new_message = models.Message(
+                content=content,
+                sender_id=user_id,
+                receiver_id=receiver_id
+            )
+            db.add(new_message)
             db.commit()
-            await manager.broadcast(f"Client #{client_id} says: {data}")
+            db.refresh(new_message)
+
+            # ვუგზავნით მიმღებს (თუ საიტზე შემოსულია)
+            if receiver_id:
+                await manager.send_personal_message(
+                    {"sender_id": user_id, "content": content}, 
+                    receiver_id
+                )
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
-        await manager.broadcast(f"Client #{client_id} left the chat")
-
-html = """
-<!DOCTYPE html>
-<html>
-    <head>
-        <title>Live Chat</title>
-    </head>
-    <body>
-        <h2>Freelance Chat</h2>
-        <form action="" onsubmit="sendMessage(event)">
-            <input type="text" id="messageText" autocomplete="off" placeholder="Enter a message..."/>
-            <button>Send</button>
-        </form>
-        <ul id='messages'></ul>
-        
-        <script>
-            var client_id = Math.floor(Math.random() * 1000);
-            var ws = new WebSocket("ws://localhost:88/chat/ws/" + client_id);
-
-            ws.onmessage = function(event) {
-                var messages = document.getElementById('messages');
-                var message = document.createElement('li');
-                var content = document.createTextNode(event.data);
-                message.appendChild(content);
-                messages.appendChild(message);
-            };
-            function sendMessage(event) {
-                var input = document.getElementById("messageText");
-                ws.send(input.value);
-                input.value = '';
-                event.preventDefault();
-            }
-        </script>
-    </body>
-</html>
-"""
-
-@router.get("/test")
-async def get_test_chat():
-    return HTMLResponse(html)
+        manager.disconnect(user_id)
