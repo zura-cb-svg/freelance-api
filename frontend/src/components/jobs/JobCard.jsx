@@ -23,7 +23,7 @@ export function JobCard({ job }) {
 
       <div className="mt-1 flex items-center justify-between border-t border-line pt-3.5">
         <span className="text-xs text-ink-500">
-          Posted by {job.owner?.full_name || `Client #${job.owner_id}`}
+          Posted by {job.owner?.full_name || "Loading..."}
         </span>
         <span className="flex items-center gap-1 text-sm font-medium text-brand-600 group-hover:gap-1.5">
           View job <ArrowRight size={14} className="transition-all" />
