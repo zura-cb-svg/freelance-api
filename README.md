@@ -38,3 +38,12 @@ My primary focus and expertise is **Backend Development**.
 - Job Posting & Management endpoints
 - Relational Database structure with One-to-Many relationships
 - Environment variable management and CORS protection
+
+## Local Development Setup
+
+This project uses Docker for the backend and database environment.
+
+1. Make sure Docker Desktop is running.
+2. Run the backend and database:
+   ```bash
+   docker compose up --build

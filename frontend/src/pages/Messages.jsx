@@ -20,8 +20,8 @@ export function Messages() {
   const ws = useRef(null);
   const messagesEndRef = useRef(null);
   
-  const baseUrl = import.meta.env.DEV ? "http://127.0.0.1:8000" : "https://freelance-api-g8gh.onrender.com";
-  const wsBaseUrl = import.meta.env.DEV ? "ws://127.0.0.1:8000" : "wss://freelance-api-g8gh.onrender.com";
+  const baseUrl = "http://localhost:8001";
+  const wsBaseUrl = "ws://localhost:8001";
 
   // Inbox ჩატვირთვა
   useEffect(() => {
