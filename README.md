@@ -47,3 +47,4 @@ This project uses Docker for the backend and database environment.
 2. Run the backend and database:
    ```bash
    docker compose up --build
+   
