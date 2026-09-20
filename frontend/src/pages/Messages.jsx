@@ -1,65 +1,97 @@
 import { useEffect, useState, useRef } from "react";
 import { useLocation } from "react-router-dom";
-import { MessageSquare, Send, User } from "lucide-react";
+import { Check, CheckCheck, MessageSquare, Send, User } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export function Messages() {
   const { user } = useAuth();
   const location = useLocation();
   
-  // States
   const [inbox, setInbox] = useState([]);
   const [activeChat, setActiveChat] = useState(location.state?.receiverId || null);
   const [messages, setMessages] = useState([]);
   const [receiverName, setReceiverName] = useState("Loading...");
   const [inputValue, setInputValue] = useState("");
-  
+  const [isTyping, setIsTyping] = useState(false);
+  const [isOnline, setIsOnline] = useState(false);
+  const typingTimeoutRef = useRef(null);
   const ws = useRef(null);
   const messagesEndRef = useRef(null);
   const baseUrl = import.meta.env.DEV ? "http://127.0.0.1:8000" : "https://freelance-api-g8gh.onrender.com";
   const wsBaseUrl = import.meta.env.DEV ? "ws://127.0.0.1:8000" : "wss://freelance-api-g8gh.onrender.com";
 
-  // 1. მარცხენა სვეტის (Inbox-ის) ჩატვირთვა
   useEffect(() => {
     if (!user) return;
     fetch(`${baseUrl}/chat/inbox/${user.id}`)
       .then(res => res.json())
       .then(data => setInbox(data))
       .catch(err => console.error("Inbox error", err));
-  }, [user, messages]); // messages როცა ემატება, მარცხენა სვეტიც განახლდება (ბოლო მესიჯი)
+  }, [user, messages.length, baseUrl]);
 
-  // 2. როცა მარცხნივ ვინმეს დავაკლიკებთ, ჩაიტვირთოს მისი მიმოწერა და გაიხსნას WebSocket
   useEffect(() => {
     if (!user || !activeChat) return;
+    let isCurrent = true;
 
-    // ისტორიის წამოღება
+    setIsTyping(false);
+    setIsOnline(false);
     fetch(`${baseUrl}/chat/history/${user.id}/${activeChat}`)
       .then(res => res.json())
       .then(data => {
+        if (!isCurrent) return;
         setReceiverName(data.other_name);
         setMessages(data.messages);
       });
 
-    // ლაივ კავშირის დამყარება
-    ws.current = new WebSocket(`${wsBaseUrl}/chat/ws/${user.id}`);
-    ws.current.onmessage = (event) => {
-      setMessages(prev => [...prev, JSON.parse(event.data)]);
+    const socket = new WebSocket(`${wsBaseUrl}/chat/ws/${user.id}`);
+    ws.current = socket;
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ type: "read", receiver_id: activeChat }));
+    };
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === "message" && data.sender_id === activeChat) {
+        setMessages(prev => [...prev, data]);
+        socket.send(JSON.stringify({ type: "read", receiver_id: activeChat }));
+      } else if (data.type === "typing" && data.sender_id === activeChat) {
+        setIsTyping(data.is_typing);
+      } else if (data.type === "read" && data.reader_id === activeChat) {
+        setMessages(prev => prev.map(message => ({ ...message, is_read: true })));
+      } else if (data.type === "status" && data.user_id === activeChat) {
+        setIsOnline(data.is_online);
+      }
     };
 
-    return () => ws.current?.close();
-  }, [user, activeChat]);
+    return () => {
+      isCurrent = false;
+      clearTimeout(typingTimeoutRef.current);
+      socket.close();
+      if (ws.current === socket) ws.current = null;
+    };
+  }, [user, activeChat, baseUrl, wsBaseUrl]);
 
-  // ავტომატური სქროლი
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isTyping]);
+
+  const handleTyping = (e) => {
+    setInputValue(e.target.value);
+    if (!ws.current || !activeChat || ws.current.readyState !== WebSocket.OPEN) return;
+
+    ws.current.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: true }));
+    clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      ws.current?.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: false }));
+    }, 1500);
+  };
 
   const sendMessage = (e) => {
     e.preventDefault();
-    if (!inputValue.trim() || !ws.current || !activeChat) return;
+    if (!inputValue.trim() || !ws.current || !activeChat || ws.current.readyState !== WebSocket.OPEN) return;
 
-    ws.current.send(JSON.stringify({ content: inputValue, receiver_id: activeChat }));
-    setMessages(prev => [...prev, { sender_id: user.id, content: inputValue }]);
+    const content = inputValue.trim();
+    ws.current.send(JSON.stringify({ type: "message", content, receiver_id: activeChat }));
+    setMessages(prev => [...prev, { sender_id: user.id, content, is_read: false }]);
+    ws.current.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: false }));
     setInputValue("");
   };
 
@@ -109,8 +141,9 @@ export function Messages() {
               {/* Header */}
               <div className="border-b border-line p-4 flex items-center gap-3 bg-white shrink-0">
                 <h3 className="font-semibold text-ink-900">{receiverName}</h3>
-                <span className="text-xs text-green-600 font-medium flex items-center gap-1">
-                  <span className="w-2 h-2 bg-green-500 rounded-full"></span> Online
+                <span className={`text-xs font-medium flex items-center gap-1 ${isOnline ? "text-green-600" : "text-gray-400"}`}>
+                  <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-gray-400"}`}></span>
+                  {isOnline ? "Online" : "Offline"}
                 </span>
               </div>
 
@@ -125,9 +158,22 @@ export function Messages() {
                       }`}>
                         {msg.content}
                       </div>
+                        {isMe && (
+                          <div className="text-[10px] text-gray-400 mt-1 flex items-center gap-1 pr-1">
+                            {msg.is_read ? <CheckCheck size={14} className="text-blue-500" /> : <Check size={14} />}
+                            {msg.is_read ? "Seen" : "Sent"}
+                          </div>
+                        )}
                     </div>
                   );
                 })}
+                {isTyping && (
+                  <div className="flex justify-start">
+                    <div className="bg-white border border-line text-ink-500 rounded-2xl rounded-bl-sm px-4 py-2.5 text-sm italic">
+                      Typing...
+                    </div>
+                  </div>
+                )}
                 <div ref={messagesEndRef} />
               </div>
 
@@ -136,7 +182,7 @@ export function Messages() {
                 <input
                   type="text"
                   value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
+                  onChange={handleTyping}
                   placeholder="Type a message..."
                   className="flex-1 border border-line rounded-full px-4 py-2.5 focus:outline-none focus:border-brand-500 text-[15px]"
                 />

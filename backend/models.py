@@ -65,8 +65,9 @@ class Review(Base):
     )
 
 class Message(Base):
-    __tablename__ = "chat_messages" # 👈 მხოლოდ ეს სახელი შევცვალეთ
+    __tablename__ = "chat_messages_v3"
     id = Column(Integer, primary_key=True)
     content = Column(String)
     sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     receiver_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    is_read = Column(Boolean, default=False)
