@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useLocation } from "react-router-dom";
-import { Check, CheckCheck, MessageSquare, Send, User } from "lucide-react";
+import { MessageSquare, Send, User, Check, CheckCheck } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export function Messages() {
@@ -12,62 +12,63 @@ export function Messages() {
   const [messages, setMessages] = useState([]);
   const [receiverName, setReceiverName] = useState("Loading...");
   const [inputValue, setInputValue] = useState("");
+  
   const [isTyping, setIsTyping] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
   const typingTimeoutRef = useRef(null);
+  
   const ws = useRef(null);
   const messagesEndRef = useRef(null);
   const baseUrl = import.meta.env.DEV ? "http://127.0.0.1:8000" : "https://freelance-api-g8gh.onrender.com";
   const wsBaseUrl = import.meta.env.DEV ? "ws://127.0.0.1:8000" : "wss://freelance-api-g8gh.onrender.com";
 
+  // Load Inbox
   useEffect(() => {
     if (!user) return;
     fetch(`${baseUrl}/chat/inbox/${user.id}`)
       .then(res => res.json())
       .then(data => setInbox(data))
       .catch(err => console.error("Inbox error", err));
-  }, [user, messages.length, baseUrl]);
+  }, [user, messages]);
 
+  // Handle Active Chat & WebSocket
   useEffect(() => {
     if (!user || !activeChat) return;
-    let isCurrent = true;
 
-    setIsTyping(false);
-    setIsOnline(false);
     fetch(`${baseUrl}/chat/history/${user.id}/${activeChat}`)
       .then(res => res.json())
       .then(data => {
-        if (!isCurrent) return;
         setReceiverName(data.other_name);
         setMessages(data.messages);
       });
 
-    const socket = new WebSocket(`${wsBaseUrl}/chat/ws/${user.id}`);
-    ws.current = socket;
-    socket.onopen = () => {
-      socket.send(JSON.stringify({ type: "read", receiver_id: activeChat }));
+    ws.current = new WebSocket(`${wsBaseUrl}/chat/ws/${user.id}`);
+    
+    ws.current.onopen = () => {
+      // Send read receipt for all past messages when opening chat
+      ws.current.send(JSON.stringify({ type: "read", receiver_id: activeChat }));
     };
-    socket.onmessage = (event) => {
+
+    ws.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      if (data.type === "message" && data.sender_id === activeChat) {
+      
+      if (data.type === "message") {
         setMessages(prev => [...prev, data]);
-        socket.send(JSON.stringify({ type: "read", receiver_id: activeChat }));
+        // Auto-send read receipt if chat is open
+        if (data.sender_id === activeChat) {
+          ws.current.send(JSON.stringify({ type: "read", receiver_id: activeChat }));
+        }
       } else if (data.type === "typing" && data.sender_id === activeChat) {
         setIsTyping(data.is_typing);
       } else if (data.type === "read" && data.reader_id === activeChat) {
-        setMessages(prev => prev.map(message => ({ ...message, is_read: true })));
+        setMessages(prev => prev.map(m => ({ ...m, is_read: true })));
       } else if (data.type === "status" && data.user_id === activeChat) {
         setIsOnline(data.is_online);
       }
     };
 
-    return () => {
-      isCurrent = false;
-      clearTimeout(typingTimeoutRef.current);
-      socket.close();
-      if (ws.current === socket) ws.current = null;
-    };
-  }, [user, activeChat, baseUrl, wsBaseUrl]);
+    return () => ws.current?.close();
+  }, [user, activeChat]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -75,22 +76,22 @@ export function Messages() {
 
   const handleTyping = (e) => {
     setInputValue(e.target.value);
-    if (!ws.current || !activeChat || ws.current.readyState !== WebSocket.OPEN) return;
-
+    if (!ws.current || !activeChat) return;
+    
     ws.current.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: true }));
+    
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
-      ws.current?.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: false }));
+      ws.current.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: false }));
     }, 1500);
   };
 
   const sendMessage = (e) => {
     e.preventDefault();
-    if (!inputValue.trim() || !ws.current || !activeChat || ws.current.readyState !== WebSocket.OPEN) return;
+    if (!inputValue.trim() || !ws.current || !activeChat) return;
 
-    const content = inputValue.trim();
-    ws.current.send(JSON.stringify({ type: "message", content, receiver_id: activeChat }));
-    setMessages(prev => [...prev, { sender_id: user.id, content, is_read: false }]);
+    ws.current.send(JSON.stringify({ type: "message", content: inputValue, receiver_id: activeChat }));
+    setMessages(prev => [...prev, { sender_id: user.id, content: inputValue, is_read: false }]);
     ws.current.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: false }));
     setInputValue("");
   };
@@ -99,37 +100,31 @@ export function Messages() {
 
   return (
     <div className="container-page max-w-5xl py-6 h-[calc(100vh-80px)] flex flex-col">
-      <h1 className="text-2xl font-semibold text-ink-900 mb-4">Messages</h1>
-      
       <div className="card flex-1 flex overflow-hidden border border-line">
-        {/* --- მარცხენა სვეტი: INBOX --- */}
+        
+        {/* INBOX */}
         <div className="w-1/3 sm:w-80 border-r border-line bg-surface overflow-y-auto flex flex-col">
           <div className="p-4 border-b border-line font-semibold text-ink-900 shrink-0">Conversations</div>
-          
-          {inbox.length === 0 ? (
-            <div className="p-4 text-sm text-ink-500 text-center">No active chats yet.</div>
-          ) : (
-            inbox.map((contact) => (
-              <button
-                key={contact.user_id}
-                onClick={() => setActiveChat(contact.user_id)}
-                className={`w-full text-left p-4 border-b border-line flex items-center gap-3 hover:bg-canvas transition ${
-                  activeChat === contact.user_id ? "bg-brand-50" : ""
-                }`}
-              >
-                <div className="h-10 w-10 bg-brand-100 text-brand-700 rounded-full flex items-center justify-center shrink-0">
-                  <User size={18} />
-                </div>
-                <div className="overflow-hidden">
-                  <div className="font-medium text-ink-900 truncate">{contact.name}</div>
-                  <div className="text-xs text-ink-500 truncate mt-0.5">{contact.last_message}</div>
-                </div>
-              </button>
-            ))
-          )}
+          {inbox.map((contact) => (
+            <button
+              key={contact.user_id}
+              onClick={() => setActiveChat(contact.user_id)}
+              className={`w-full text-left p-4 border-b border-line flex items-center gap-3 hover:bg-canvas transition ${
+                activeChat === contact.user_id ? "bg-brand-50" : ""
+              }`}
+            >
+              <div className="h-10 w-10 bg-brand-100 text-brand-700 rounded-full flex items-center justify-center shrink-0">
+                <User size={18} />
+              </div>
+              <div className="overflow-hidden w-full">
+                <div className="font-medium text-ink-900 truncate">{contact.name}</div>
+                <div className="text-xs text-ink-500 truncate mt-0.5">{contact.last_message}</div>
+              </div>
+            </button>
+          ))}
         </div>
 
-        {/* --- მარჯვენა სვეტი: CHAT --- */}
+        {/* CHAT AREA */}
         <div className="flex-1 flex flex-col bg-canvas relative">
           {!activeChat ? (
             <div className="m-auto text-center text-ink-500 flex flex-col items-center">
@@ -142,7 +137,7 @@ export function Messages() {
               <div className="border-b border-line p-4 flex items-center gap-3 bg-white shrink-0">
                 <h3 className="font-semibold text-ink-900">{receiverName}</h3>
                 <span className={`text-xs font-medium flex items-center gap-1 ${isOnline ? "text-green-600" : "text-gray-400"}`}>
-                  <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-gray-400"}`}></span>
+                  <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-gray-400"}`}></span> 
                   {isOnline ? "Online" : "Offline"}
                 </span>
               </div>
@@ -153,17 +148,19 @@ export function Messages() {
                   const isMe = msg.sender_id === user.id;
                   return (
                     <div key={idx} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                      <div className={`max-w-[70%] rounded-2xl px-4 py-2.5 text-[15px] ${
-                        isMe ? "bg-brand-600 text-white rounded-br-sm" : "bg-white border border-line text-ink-900 rounded-bl-sm"
-                      }`}>
-                        {msg.content}
-                      </div>
+                      <div className={`max-w-[70%] flex flex-col ${isMe ? "items-end" : "items-start"}`}>
+                        <div className={`rounded-2xl px-4 py-2.5 text-[15px] ${
+                          isMe ? "bg-brand-600 text-white rounded-br-sm" : "bg-white border border-line text-ink-900 rounded-bl-sm"
+                        }`}>
+                          {msg.content}
+                        </div>
                         {isMe && (
                           <div className="text-[10px] text-gray-400 mt-1 flex items-center gap-1 pr-1">
                             {msg.is_read ? <CheckCheck size={14} className="text-blue-500" /> : <Check size={14} />}
                             {msg.is_read ? "Seen" : "Sent"}
                           </div>
                         )}
+                      </div>
                     </div>
                   );
                 })}
@@ -177,7 +174,7 @@ export function Messages() {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Input Area */}
+              {/* Input */}
               <form onSubmit={sendMessage} className="p-4 bg-white border-t border-line flex gap-3 shrink-0">
                 <input
                   type="text"
