@@ -1,8 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.orm import Session
-import json
 from database import get_db
-import models
+import models, json
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -12,108 +11,80 @@ class ConnectionManager:
 
     async def connect(self, websocket: WebSocket, user_id: int):
         await websocket.accept()
-        online_user_ids = list(self.active_connections)
         self.active_connections[user_id] = websocket
         await self.broadcast({"type": "status", "user_id": user_id, "is_online": True})
-        for online_user_id in online_user_ids:
-            await websocket.send_json({
-                "type": "status",
-                "user_id": online_user_id,
-                "is_online": True,
-            })
 
-    async def disconnect(self, user_id: int, websocket: WebSocket | None = None):
-        if websocket is None or self.active_connections.get(user_id) is websocket:
-            self.active_connections.pop(user_id, None)
-            await self.broadcast({"type": "status", "user_id": user_id, "is_online": False})
+    async def disconnect(self, user_id: int):
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
+        await self.broadcast({"type": "status", "user_id": user_id, "is_online": False})
 
     async def send_personal_message(self, message: dict, user_id: int):
-        connection = self.active_connections.get(user_id)
-        if connection:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                await self.disconnect(user_id, connection)
+        if user_id in self.active_connections:
+            await self.active_connections[user_id].send_json(message)
 
     async def broadcast(self, message: dict):
-        for user_id, connection in list(self.active_connections.items()):
+        for connection in self.active_connections.values():
             try:
                 await connection.send_json(message)
-            except Exception:
-                await self.disconnect(user_id, connection)
+            except:
+                pass
 
 manager = ConnectionManager()
-
-@router.get("/test")
-def test_chat():
-    return {"message": "Chat is active and WebSocket is ready!"}
 
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = Depends(get_db)):
     await manager.connect(websocket, user_id)
     try:
         while True:
-            payload = json.loads(await websocket.receive_text())
+            data = await websocket.receive_text()
+            payload = json.loads(data)
             action = payload.get("type", "message")
             receiver_id = int(payload.get("receiver_id"))
 
             if action == "message":
-                new_message = models.Message(
-                    content=payload.get("content", ""),
+                new_msg = models.Message(
+                    content=payload.get("content"),
                     sender_id=user_id,
                     receiver_id=receiver_id,
-                    is_read=False,
+                    is_read=False
                 )
-                db.add(new_message)
+                db.add(new_msg)
                 db.commit()
-                db.refresh(new_message)
+                db.refresh(new_msg)
+                
                 await manager.send_personal_message({
                     "type": "message",
-                    "id": new_message.id,
+                    "id": new_msg.id,
                     "sender_id": user_id,
-                    "content": new_message.content,
-                    "is_read": new_message.is_read,
+                    "content": new_msg.content,
+                    "is_read": False
                 }, receiver_id)
+
             elif action == "typing":
                 await manager.send_personal_message({
                     "type": "typing",
                     "sender_id": user_id,
-                    "is_typing": payload.get("is_typing", True),
+                    "is_typing": payload.get("is_typing", True)
                 }, receiver_id)
+
             elif action == "read":
                 db.query(models.Message).filter(
                     models.Message.sender_id == receiver_id,
                     models.Message.receiver_id == user_id,
-                    models.Message.is_read.is_(False),
-                ).update({"is_read": True}, synchronize_session=False)
+                    models.Message.is_read == False
+                ).update({"is_read": True})
                 db.commit()
-                await manager.send_personal_message({"type": "read", "reader_id": user_id}, receiver_id)
+                
+                await manager.send_personal_message({
+                    "type": "read",
+                    "reader_id": user_id
+                }, receiver_id)
+
     except WebSocketDisconnect:
-        await manager.disconnect(user_id, websocket)
-    except Exception as error:
-        print(f"WebSocket Error: {error}")
-        await manager.disconnect(user_id, websocket)
-
-@router.get("/history/{user1_id}/{user2_id}")
-def get_chat_history(user1_id: int, user2_id: int, db: Session = Depends(get_db)):
-    other_user = db.query(models.User).filter(models.User.id == user2_id).first()
-    name = other_user.full_name if other_user else f"User #{user2_id}"
-
-    messages = db.query(models.Message).filter(
-        ((models.Message.sender_id == user1_id) & (models.Message.receiver_id == user2_id)) |
-        ((models.Message.sender_id == user2_id) & (models.Message.receiver_id == user1_id))
-    ).order_by(models.Message.id.asc()).all()
-
-    return {
-        "other_name": name,
-        "messages": [{
-            "id": message.id,
-            "sender_id": message.sender_id,
-            "content": message.content,
-            "is_read": message.is_read,
-        } for message in messages]
-    }
-
+        await manager.disconnect(user_id)
+    except Exception as e:
+        await manager.disconnect(user_id)
 
 @router.get("/inbox/{user_id}")
 def get_inbox(user_id: int, db: Session = Depends(get_db)):
@@ -131,5 +102,19 @@ def get_inbox(user_id: int, db: Session = Depends(get_db)):
                 "name": other_user.full_name if other_user else f"User #{other_id}",
                 "last_message": msg.content
             }
-            
     return list(conversations.values())
+
+@router.get("/history/{user1_id}/{user2_id}")
+def get_chat_history(user1_id: int, user2_id: int, db: Session = Depends(get_db)):
+    other_user = db.query(models.User).filter(models.User.id == user2_id).first()
+    name = other_user.full_name if other_user else f"User #{user2_id}"
+
+    messages = db.query(models.Message).filter(
+        ((models.Message.sender_id == user1_id) & (models.Message.receiver_id == user2_id)) |
+        ((models.Message.sender_id == user2_id) & (models.Message.receiver_id == user1_id))
+    ).order_by(models.Message.id.asc()).all()
+
+    return {
+        "other_name": name,
+        "messages": [{"id": m.id, "sender_id": m.sender_id, "content": m.content, "is_read": m.is_read} for m in messages]
+    }

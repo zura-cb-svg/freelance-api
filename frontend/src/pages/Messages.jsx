@@ -10,7 +10,7 @@ export function Messages() {
   const [inbox, setInbox] = useState([]);
   const [activeChat, setActiveChat] = useState(location.state?.receiverId || null);
   const [messages, setMessages] = useState([]);
-  const [receiverName, setReceiverName] = useState("Loading...");
+  const [receiverName, setReceiverName] = useState("Select a conversation");
   const [inputValue, setInputValue] = useState("");
   
   const [isTyping, setIsTyping] = useState(false);
@@ -19,10 +19,11 @@ export function Messages() {
   
   const ws = useRef(null);
   const messagesEndRef = useRef(null);
+  
   const baseUrl = import.meta.env.DEV ? "http://127.0.0.1:8000" : "https://freelance-api-g8gh.onrender.com";
   const wsBaseUrl = import.meta.env.DEV ? "ws://127.0.0.1:8000" : "wss://freelance-api-g8gh.onrender.com";
 
-  // Load Inbox
+  // Inbox ჩატვირთვა
   useEffect(() => {
     if (!user) return;
     fetch(`${baseUrl}/chat/inbox/${user.id}`)
@@ -31,7 +32,7 @@ export function Messages() {
       .catch(err => console.error("Inbox error", err));
   }, [user, messages]);
 
-  // Handle Active Chat & WebSocket
+  // ჩატის გახსნა და WebSocket დაკავშირება
   useEffect(() => {
     if (!user || !activeChat) return;
 
@@ -45,16 +46,13 @@ export function Messages() {
     ws.current = new WebSocket(`${wsBaseUrl}/chat/ws/${user.id}`);
     
     ws.current.onopen = () => {
-      // Send read receipt for all past messages when opening chat
       ws.current.send(JSON.stringify({ type: "read", receiver_id: activeChat }));
     };
 
     ws.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      
       if (data.type === "message") {
         setMessages(prev => [...prev, data]);
-        // Auto-send read receipt if chat is open
         if (data.sender_id === activeChat) {
           ws.current.send(JSON.stringify({ type: "read", receiver_id: activeChat }));
         }
@@ -70,6 +68,7 @@ export function Messages() {
     return () => ws.current?.close();
   }, [user, activeChat]);
 
+  // ავტო-სქროლი ქვემოთ
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
@@ -77,9 +76,7 @@ export function Messages() {
   const handleTyping = (e) => {
     setInputValue(e.target.value);
     if (!ws.current || !activeChat) return;
-    
     ws.current.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: true }));
-    
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
       ws.current.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: false }));
@@ -96,46 +93,46 @@ export function Messages() {
     setInputValue("");
   };
 
-  if (!user) return <div className="container-page py-10 text-center">Please log in to view messages.</div>;
+  if (!user) return <div className="p-10 text-center">Please log in to view messages.</div>;
 
   return (
-    <div className="container-page max-w-5xl py-6 h-[calc(100vh-80px)] flex flex-col">
-      <div className="card flex-1 flex overflow-hidden border border-line">
+    <div className="max-w-5xl mx-auto py-6 h-[calc(100vh-80px)] flex flex-col">
+      <div className="flex-1 flex overflow-hidden border rounded-lg bg-white shadow-sm">
         
-        {/* INBOX */}
-        <div className="w-1/3 sm:w-80 border-r border-line bg-surface overflow-y-auto flex flex-col">
-          <div className="p-4 border-b border-line font-semibold text-ink-900 shrink-0">Conversations</div>
+        {/* მარცხენა სვეტი - INBOX */}
+        <div className="w-1/3 border-r bg-gray-50 overflow-y-auto flex flex-col">
+          <div className="p-4 border-b font-semibold bg-white">Messages</div>
           {inbox.map((contact) => (
             <button
               key={contact.user_id}
               onClick={() => setActiveChat(contact.user_id)}
-              className={`w-full text-left p-4 border-b border-line flex items-center gap-3 hover:bg-canvas transition ${
-                activeChat === contact.user_id ? "bg-brand-50" : ""
+              className={`w-full text-left p-4 border-b flex items-center gap-3 hover:bg-gray-100 ${
+                activeChat === contact.user_id ? "bg-blue-50" : ""
               }`}
             >
-              <div className="h-10 w-10 bg-brand-100 text-brand-700 rounded-full flex items-center justify-center shrink-0">
+              <div className="h-10 w-10 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center shrink-0">
                 <User size={18} />
               </div>
               <div className="overflow-hidden w-full">
-                <div className="font-medium text-ink-900 truncate">{contact.name}</div>
-                <div className="text-xs text-ink-500 truncate mt-0.5">{contact.last_message}</div>
+                <div className="font-medium truncate">{contact.name}</div>
+                <div className="text-xs text-gray-500 truncate mt-0.5">{contact.last_message}</div>
               </div>
             </button>
           ))}
         </div>
 
-        {/* CHAT AREA */}
-        <div className="flex-1 flex flex-col bg-canvas relative">
+        {/* მარჯვენა სვეტი - CHAT */}
+        <div className="flex-1 flex flex-col bg-gray-50 relative">
           {!activeChat ? (
-            <div className="m-auto text-center text-ink-500 flex flex-col items-center">
-              <MessageSquare size={48} className="mb-4 text-line" />
-              <p>Select a conversation from the left menu</p>
+            <div className="m-auto text-center text-gray-400">
+              <MessageSquare size={48} className="mb-4 mx-auto opacity-50" />
+              <p>Select a user to start chatting</p>
             </div>
           ) : (
             <>
               {/* Header */}
-              <div className="border-b border-line p-4 flex items-center gap-3 bg-white shrink-0">
-                <h3 className="font-semibold text-ink-900">{receiverName}</h3>
+              <div className="border-b p-4 flex items-center gap-3 bg-white">
+                <h3 className="font-semibold">{receiverName}</h3>
                 <span className={`text-xs font-medium flex items-center gap-1 ${isOnline ? "text-green-600" : "text-gray-400"}`}>
                   <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-gray-400"}`}></span> 
                   {isOnline ? "Online" : "Offline"}
@@ -149,8 +146,8 @@ export function Messages() {
                   return (
                     <div key={idx} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
                       <div className={`max-w-[70%] flex flex-col ${isMe ? "items-end" : "items-start"}`}>
-                        <div className={`rounded-2xl px-4 py-2.5 text-[15px] ${
-                          isMe ? "bg-brand-600 text-white rounded-br-sm" : "bg-white border border-line text-ink-900 rounded-bl-sm"
+                        <div className={`rounded-2xl px-4 py-2 text-sm ${
+                          isMe ? "bg-blue-600 text-white rounded-br-sm" : "bg-white border rounded-bl-sm"
                         }`}>
                           {msg.content}
                         </div>
@@ -165,30 +162,26 @@ export function Messages() {
                   );
                 })}
                 {isTyping && (
-                  <div className="flex justify-start">
-                    <div className="bg-white border border-line text-ink-500 rounded-2xl rounded-bl-sm px-4 py-2.5 text-sm italic">
-                      Typing...
-                    </div>
-                  </div>
+                  <div className="text-gray-400 text-xs italic px-2">Typing...</div>
                 )}
                 <div ref={messagesEndRef} />
               </div>
 
               {/* Input */}
-              <form onSubmit={sendMessage} className="p-4 bg-white border-t border-line flex gap-3 shrink-0">
+              <form onSubmit={sendMessage} className="p-4 bg-white border-t flex gap-3">
                 <input
                   type="text"
                   value={inputValue}
                   onChange={handleTyping}
                   placeholder="Type a message..."
-                  className="flex-1 border border-line rounded-full px-4 py-2.5 focus:outline-none focus:border-brand-500 text-[15px]"
+                  className="flex-1 border rounded-full px-4 py-2 focus:outline-none focus:border-blue-500 text-sm"
                 />
                 <button
                   type="submit"
                   disabled={!inputValue.trim()}
-                  className="bg-brand-600 text-white h-11 w-11 rounded-full flex items-center justify-center hover:bg-brand-700 transition disabled:opacity-50"
+                  className="bg-blue-600 text-white h-10 w-10 rounded-full flex items-center justify-center hover:bg-blue-700 disabled:opacity-50"
                 >
-                  <Send size={18} />
+                  <Send size={16} />
                 </button>
               </form>
             </>
