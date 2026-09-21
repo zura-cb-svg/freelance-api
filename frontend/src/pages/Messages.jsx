@@ -20,8 +20,8 @@ export function Messages() {
   const ws = useRef(null);
   const messagesEndRef = useRef(null);
   
-  const baseUrl = "http://localhost:8001";
-  const wsBaseUrl = "ws://localhost:8001";
+  const baseUrl = "https://freelance-api-g8gh.onrender.com";
+  const wsBaseUrl = "wss://freelance-api-g8gh.onrender.com";
 
   // Inbox ჩატვირთვა
   useEffect(() => {
