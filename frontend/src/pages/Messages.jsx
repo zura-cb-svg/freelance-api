@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { MessageSquare, Send, User, Check, CheckCheck } from "lucide-react";
+import api, { tokenStorage } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 
 export function Messages() {
@@ -13,6 +14,8 @@ export function Messages() {
   const [receiverName, setReceiverName] = useState("Select a conversation");
   const [inputValue, setInputValue] = useState("");
   
+  const [connected, setConnected] = useState(false);
+  const [chatError, setChatError] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
   const typingTimeoutRef = useRef(null);
@@ -20,39 +23,60 @@ export function Messages() {
   const ws = useRef(null);
   const messagesEndRef = useRef(null);
   
-  const baseUrl = "https://freelance-api-g8gh.onrender.com";
-  const wsBaseUrl = "wss://freelance-api-g8gh.onrender.com";
+  const baseUrl = api.defaults.baseURL || window.location.origin;
+  const wsUrl = new URL(baseUrl);
+  wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+  const wsBaseUrl = wsUrl.origin;
 
   // Inbox ჩატვირთვა
   useEffect(() => {
     if (!user) return;
-    fetch(`${baseUrl}/chat/inbox/${user.id}`)
-      .then(res => res.json())
+    api.get(`/chat/inbox/${user.id}`)
+      .then(res => res.data)
       .then(data => setInbox(data))
-      .catch(err => console.error("Inbox error", err));
+      .catch(err => setChatError(err.friendlyMessage || "Could not load conversations."));
   }, [user, messages]);
 
   // ჩატის გახსნა და WebSocket დაკავშირება
   useEffect(() => {
     if (!user || !activeChat) return;
 
-    fetch(`${baseUrl}/chat/history/${user.id}/${activeChat}`)
-      .then(res => res.json())
+    let cancelled = false;
+    setConnected(false);
+    setChatError("");
+    setIsTyping(false);
+    setIsOnline(false);
+    setMessages([]);
+    api.get(`/chat/history/${user.id}/${activeChat}`)
+      .then(res => res.data)
       .then(data => {
+        if (cancelled) return;
         setReceiverName(data.other_name);
-        setMessages(data.messages);
-      });
+        setMessages(prev => [...new Map([...data.messages, ...prev].map(m => [m.id, m])).values()].sort((a, b) => a.id - b.id));
+      }).catch(err => { if (!cancelled) setChatError(err.friendlyMessage || "Could not load messages."); });
 
-    ws.current = new WebSocket(`${wsBaseUrl}/chat/ws/${user.id}`);
+    const socket = new WebSocket(`${wsBaseUrl}/chat/ws/${user.id}`);
     
-    ws.current.onopen = () => {
-      ws.current.send(JSON.stringify({ type: "read", receiver_id: activeChat }));
+    ws.current = socket;
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ type: "authenticate", token: tokenStorage.get() }));
     };
+    socket.onclose = () => {
+      if (!cancelled) { setConnected(false); setChatError("Chat disconnected. Reopen the conversation to reconnect."); }
+    };
+    socket.onerror = () => { if (!cancelled) setChatError("Could not connect to chat."); };
 
-    ws.current.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (cancelled) return;
       const data = JSON.parse(event.data);
-      if (data.type === "message") {
-        setMessages(prev => [...prev, data]);
+      if (data.type === "authenticated") {
+        setConnected(true);
+        socket.send(JSON.stringify({ type: "read", receiver_id: activeChat }));
+      } else if (data.type === "error") {
+        setChatError(data.message);
+      } else if (data.type === "message") {
+        if (data.sender_id !== activeChat && data.receiver_id !== activeChat) return;
+        setMessages(prev => prev.some(m => m.id === data.id) ? prev : [...prev, data]);
         if (data.sender_id === activeChat) {
           ws.current.send(JSON.stringify({ type: "read", receiver_id: activeChat }));
         }
@@ -65,7 +89,7 @@ export function Messages() {
       }
     };
 
-    return () => ws.current?.close();
+    return () => { cancelled = true; clearTimeout(typingTimeoutRef.current); socket.close(); };
   }, [user, activeChat]);
 
   // ავტო-სქროლი ქვემოთ
@@ -75,20 +99,19 @@ export function Messages() {
 
   const handleTyping = (e) => {
     setInputValue(e.target.value);
-    if (!ws.current || !activeChat) return;
+    if (!connected || ws.current?.readyState !== WebSocket.OPEN || !activeChat) return;
     ws.current.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: true }));
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
-      ws.current.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: false }));
+      if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: false }));
     }, 1500);
   };
 
   const sendMessage = (e) => {
     e.preventDefault();
-    if (!inputValue.trim() || !ws.current || !activeChat) return;
+    if (!inputValue.trim() || !connected || ws.current?.readyState !== WebSocket.OPEN || !activeChat) return;
 
     ws.current.send(JSON.stringify({ type: "message", content: inputValue, receiver_id: activeChat }));
-    setMessages(prev => [...prev, { sender_id: user.id, content: inputValue, is_read: false }]);
     ws.current.send(JSON.stringify({ type: "typing", receiver_id: activeChat, is_typing: false }));
     setInputValue("");
   };
@@ -97,6 +120,7 @@ export function Messages() {
 
   return (
     <div className="max-w-5xl mx-auto py-6 h-[calc(100vh-80px)] flex flex-col">
+      {chatError && <p role="alert" className="p-3 text-sm text-red-700">{chatError}</p>}
       <div className="flex-1 flex overflow-hidden border rounded-lg bg-white shadow-sm">
         
         {/* მარცხენა სვეტი - INBOX */}
@@ -171,6 +195,8 @@ export function Messages() {
               <form onSubmit={sendMessage} className="p-4 bg-white border-t flex gap-3">
                 <input
                   type="text"
+                  maxLength={4000}
+                  disabled={!connected}
                   value={inputValue}
                   onChange={handleTyping}
                   placeholder="Type a message..."
@@ -178,7 +204,8 @@ export function Messages() {
                 />
                 <button
                   type="submit"
-                  disabled={!inputValue.trim()}
+                  aria-label="Send message"
+                  disabled={!connected || !inputValue.trim()}
                   className="bg-blue-600 text-white h-10 w-10 rounded-full flex items-center justify-center hover:bg-blue-700 disabled:opacity-50"
                 >
                   <Send size={16} />

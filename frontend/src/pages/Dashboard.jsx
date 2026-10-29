@@ -8,7 +8,7 @@ import { JobCardSkeleton } from "../components/ui/Skeleton";
 import { EmptyState } from "../components/ui/EmptyState";
 
 const HIGHLIGHTS = [
-  { icon: ShieldCheck, label: "Verified job postings", detail: "Every listing comes straight from a registered client account." },
+  { icon: ShieldCheck, label: "Client job listings", detail: "Explore example jobs posted by client accounts." },
   { icon: Zap, label: "Fast applications", detail: "Send a proposal with your rate and timeline in under a minute." },
   { icon: Users, label: "Built for both sides", detail: "One clean workspace for clients hiring and freelancers applying." },
 ];
@@ -53,7 +53,7 @@ export function Dashboard() {
               Find work that moves your career forward.
             </motion.h1>
             <p className="mt-5 max-w-lg text-[17px] leading-relaxed text-ink-500">
-              Forge connects clients with real projects to freelancers ready to deliver them —
+              A freelance marketplace demo connecting client projects and freelancer applications —
               transparent budgets, direct applications, no middlemen.
             </p>
 
@@ -111,7 +111,7 @@ export function Dashboard() {
         <div className="mb-6 flex items-end justify-between">
           <div>
             <h2 className="text-xl font-semibold text-ink-900">Recently posted</h2>
-            <p className="mt-1 text-sm text-ink-500">Fresh opportunities from clients on Forge.</p>
+            <p className="mt-1 text-sm text-ink-500">Example listings in this portfolio project.</p>
           </div>
           <button onClick={() => navigate("/jobs")} className="hidden text-sm font-medium text-brand-600 hover:text-brand-700 sm:block">
             Browse all jobs
