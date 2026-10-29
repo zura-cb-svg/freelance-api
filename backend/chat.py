@@ -1,50 +1,80 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
 import models, json
+import asyncio
+from auth import get_current_user
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: dict[int, WebSocket] = {}
+        self.active_connections: dict[int, set[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int):
-        await websocket.accept()
-        self.active_connections[user_id] = websocket
+        self.active_connections.setdefault(user_id, set()).add(websocket)
         await self.broadcast({"type": "status", "user_id": user_id, "is_online": True})
 
-    async def disconnect(self, user_id: int):
-        if user_id in self.active_connections:
-            del self.active_connections[user_id]
-        await self.broadcast({"type": "status", "user_id": user_id, "is_online": False})
+    async def disconnect(self, user_id: int, websocket: WebSocket):
+        connections = self.active_connections.get(user_id, set())
+        connections.discard(websocket)
+        if not connections:
+            self.active_connections.pop(user_id, None)
+            await self.broadcast({"type": "status", "user_id": user_id, "is_online": False})
 
     async def send_personal_message(self, message: dict, user_id: int):
-        if user_id in self.active_connections:
-            await self.active_connections[user_id].send_json(message)
-
-    async def broadcast(self, message: dict):
-        for connection in self.active_connections.values():
+        for connection in tuple(self.active_connections.get(user_id, set())):
             try:
                 await connection.send_json(message)
-            except:
-                pass
+            except Exception:
+                await self.disconnect(user_id, connection)
+
+    async def broadcast(self, message: dict):
+        for connections in tuple(self.active_connections.values()):
+            for connection in tuple(connections):
+                try:
+                    await connection.send_json(message)
+                except Exception:
+                    pass
 
 manager = ConnectionManager()
 
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = Depends(get_db)):
+    await websocket.accept()
+    try:
+        credentials = await asyncio.wait_for(websocket.receive_json(), timeout=10)
+        if credentials.get("type") != "authenticate":
+            raise HTTPException(status_code=401)
+        user = get_current_user(token=credentials.get("token", ""), db=db)
+        if user.id != user_id or not user.is_active:
+            raise HTTPException(status_code=403)
+    except (HTTPException, asyncio.TimeoutError, ValueError, AttributeError):
+        await websocket.close(code=1008)
+        return
     await manager.connect(websocket, user_id)
+    await websocket.send_json({"type": "authenticated"})
     try:
         while True:
             data = await websocket.receive_text()
             payload = json.loads(data)
             action = payload.get("type", "message")
-            receiver_id = int(payload.get("receiver_id"))
+            try:
+                receiver_id = int(payload.get("receiver_id"))
+            except (TypeError, ValueError):
+                await websocket.send_json({"type": "error", "message": "Invalid recipient."})
+                continue
+            if not db.query(models.User).filter(models.User.id == receiver_id, models.User.is_active == True).first():
+                await websocket.send_json({"type": "error", "message": "Recipient unavailable."})
+                continue
 
             if action == "message":
+                content = payload.get("content")
+                if not isinstance(content, str) or not content.strip() or len(content) > 4000:
+                    await websocket.send_json({"type": "error", "message": "Use 1–4000 characters."})
+                    continue
                 new_msg = models.Message(
-                    content=payload.get("content"),
+                    content=content.strip(),
                     sender_id=user_id,
                     receiver_id=receiver_id,
                     is_read=False
@@ -53,13 +83,16 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
                 db.commit()
                 db.refresh(new_msg)
                 
-                await manager.send_personal_message({
+                message = {
                     "type": "message",
                     "id": new_msg.id,
                     "sender_id": user_id,
+                    "receiver_id": receiver_id,
                     "content": new_msg.content,
                     "is_read": False
-                }, receiver_id)
+                }
+                await manager.send_personal_message(message, receiver_id)
+                await websocket.send_json(message)
 
             elif action == "typing":
                 await manager.send_personal_message({
@@ -82,12 +115,14 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
                 }, receiver_id)
 
     except WebSocketDisconnect:
-        await manager.disconnect(user_id)
+        await manager.disconnect(user_id, websocket)
     except Exception as e:
-        await manager.disconnect(user_id)
+        await manager.disconnect(user_id, websocket)
 
 @router.get("/inbox/{user_id}")
-def get_inbox(user_id: int, db: Session = Depends(get_db)):
+def get_inbox(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only view your own inbox")
     messages = db.query(models.Message).filter(
         (models.Message.sender_id == user_id) | (models.Message.receiver_id == user_id)
     ).order_by(models.Message.id.desc()).all()
@@ -105,7 +140,9 @@ def get_inbox(user_id: int, db: Session = Depends(get_db)):
     return list(conversations.values())
 
 @router.get("/history/{user1_id}/{user2_id}")
-def get_chat_history(user1_id: int, user2_id: int, db: Session = Depends(get_db)):
+def get_chat_history(user1_id: int, user2_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if user1_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only view your own conversations")
     other_user = db.query(models.User).filter(models.User.id == user2_id).first()
     name = other_user.full_name if other_user else f"User #{user2_id}"
 

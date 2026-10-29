@@ -10,7 +10,7 @@ export const tokenStorage = {
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
-  timeout: 20000,
+  timeout: 60000,
 });
 
 // Endpoints that are public per the backend's OpenAPI spec (no `security`
@@ -41,7 +41,14 @@ export function onUnauthorized(listener) {
 
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const config = error.config;
+    const transient = !error.response || [502, 503, 504].includes(error.response.status);
+    if (config?.method === "get" && transient && !config._retried) {
+      config._retried = true;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return api(config);
+    }
     if (!error.response) {
       error.friendlyMessage =
         "Can't reach the server right now. Check your connection and try again.";
